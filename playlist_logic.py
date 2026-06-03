@@ -70,8 +70,13 @@ def classify_song(song: Song, profile: Dict[str, object]) -> str:
     hype_keywords = ["rock", "punk", "party"]
     chill_keywords = ["lofi", "ambient", "sleep"]
 
-    is_hype_keyword = any(k in genre for k in hype_keywords)
-    is_chill_keyword = any(k in title for k in chill_keywords)
+    # Fix: compare against lowercased values so keyword matching is
+    # case-insensitive (titles are not lowercased during normalization).
+    genre_l = str(genre).lower()
+    title_l = str(title).lower()
+
+    is_hype_keyword = any(k in genre_l for k in hype_keywords)
+    is_chill_keyword = any(k in title_l for k in chill_keywords)
 
     if genre == favorite_genre or energy >= hype_min_energy or is_hype_keyword:
         return "Hype"
@@ -101,7 +106,8 @@ def merge_playlists(a: PlaylistMap, b: PlaylistMap) -> PlaylistMap:
     """Merge two playlist maps into a new map."""
     merged: PlaylistMap = {}
     for key in set(list(a.keys()) + list(b.keys())):
-        merged[key] = a.get(key, [])
+        # Fix: copy into a new list so we never mutate the input playlists.
+        merged[key] = list(a.get(key, []))
         merged[key].extend(b.get(key, []))
     return merged
 
@@ -116,12 +122,15 @@ def compute_playlist_stats(playlists: PlaylistMap) -> Dict[str, object]:
     chill = playlists.get("Chill", [])
     mixed = playlists.get("Mixed", [])
 
-    total = len(hype)
+    # Fix: ratios and averages must be computed against ALL songs, not just
+    # the Hype list. Previously `total` was len(hype) and avg energy only
+    # summed Hype energies, producing nonsensical stats.
+    total = len(all_songs)
     hype_ratio = len(hype) / total if total > 0 else 0.0
 
     avg_energy = 0.0
     if all_songs:
-        total_energy = sum(song.get("energy", 0) for song in hype)
+        total_energy = sum(song.get("energy", 0) for song in all_songs)
         avg_energy = total_energy / len(all_songs)
 
     top_artist, top_count = most_common_artist(all_songs)
@@ -168,7 +177,10 @@ def search_songs(
 
     for song in songs:
         value = str(song.get(field, "")).lower()
-        if value and value in q:
+        # Fix: match when the query is contained within the field value
+        # (partial, case-insensitive), e.g. "ac" matches "ac/dc". The
+        # previous check (value in q) had the containment reversed.
+        if q in value:
             filtered.append(song)
 
     return filtered
@@ -184,7 +196,12 @@ def lucky_pick(
     elif mode == "chill":
         songs = playlists.get("Chill", [])
     else:
-        songs = playlists.get("Hype", []) + playlists.get("Chill", [])
+        # Fix: "any" should draw from the full pool, including Mixed.
+        songs = (
+            playlists.get("Hype", [])
+            + playlists.get("Chill", [])
+            + playlists.get("Mixed", [])
+        )
 
     return random_choice_or_none(songs)
 
@@ -193,6 +210,9 @@ def random_choice_or_none(songs: List[Song]) -> Optional[Song]:
     """Return a random song or None."""
     import random
 
+    # Fix: guard against an empty list, which would raise IndexError.
+    if not songs:
+        return None
     return random.choice(songs)
 
 
